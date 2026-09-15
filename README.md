@@ -1,12 +1,16 @@
-# ASTRA Visit Log — Android APK
+# ASTRA Visit Log — Android fixed build
 
-Offline-first Android wrapper for the ASTRA Visit Log web app.
+Fixes:
+- Native Android save bridge for JSON backup and Excel export.
+- Native Android file picker for JSON restore and Excel import.
+- WebView Chrome/file chooser support.
+- ASTRA naming in exports/backups.
+- Keeps existing local-storage key so existing ASTRA data can migrate.
+- Removes the old startup purge that could remove bundled clients.
+- Ensures bundled clients are reseeded if the database is empty.
 
-## Build free with GitHub Actions
-1. Create a public GitHub repository named `ASTRA-Visit-Log` under your account.
-2. Upload all files/folders from this project, preserving `.github/workflows/build-apk.yml`.
-3. Open **Actions → Build ASTRA APK → Run workflow**.
-4. After completion, open the workflow run and download the artifact **ASTRA-Visit-Log-APK**.
-5. Extract the ZIP and install `app-debug.apk` on Android.
+Build through GitHub Actions using `.github/workflows/build-apk.yml`.
 
-No domain is required. The APK runs the app locally and stores its data on the device. Internet is only useful for external services already used by the web app (for example map/geocoding features).
+
+## Version 2.0 native file I/O
+Backup/restore and Excel import/export use the Android native file bridge when running in the APK. This avoids browser blob-download/file-picker limitations and does not require ExcelJS for APK Excel operations.
