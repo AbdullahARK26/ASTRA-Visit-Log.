@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0F6B4C">
-<title>ARK Visit Log — Offline First</title>
+<title>ASTRA Visit Log — Offline First</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -105,8 +105,8 @@ button.danger{background:#fdf1f0;color:var(--red);border:1px solid #f3d4d1;borde
 
 
 
-<header><p id="storageNote" class="small" style="display:none"></p><h1>🌿 ARK Visit Log</h1><p>Client master • Daily visits • Expenses • Excel export</p>
-<div class="userbar"><span class="chip">💾 Offline mode</span><button class="secondary" onclick="exportBackupJSON()">⬇ Backup</button><button class="secondary" onclick="document.getElementById('backupFile').click()">⬆ Restore</button><input id="backupFile" class="hidden" type="file" accept=".json,application/json" onchange="importBackupJSON(event)"></div>
+<header><p id="storageNote" class="small" style="display:none"></p><h1>🌿 ASTRA Visit Log</h1><p>Client master • Daily visits • Expenses • Excel export</p>
+<div class="userbar"><span class="chip">💾 Offline mode</span><button class="secondary" onclick="exportBackupJSON()">⬇ Backup</button><button class="secondary" onclick="chooseBackupFile()">⬆ Restore</button><input id="backupFile" class="hidden" type="file" accept=".json,application/json" onchange="importBackupJSON(event)"></div>
 </header>
 
 <main id="appMain">
@@ -126,7 +126,7 @@ button.danger{background:#fdf1f0;color:var(--red);border:1px solid #f3d4d1;borde
       <button class="primary" onclick="show('visits')">+ Add Visit</button>
       <button class="secondary" onclick="show('clients')">+ Add Client</button>
       <button class="secondary" onclick="exportExcel()">⬇ Export Excel</button>
-      <button class="secondary" onclick="document.getElementById('importFile').click()">⬆ Import Excel</button>
+      <button class="secondary" onclick="chooseExcelFile()">⬆ Import Excel</button>
       <input id="importFile" class="hidden" type="file" accept=".xlsx,.xls" onchange="importExcel(event)">
     </div>
   </div>
@@ -228,7 +228,7 @@ button.danger{background:#fdf1f0;color:var(--red);border:1px solid #f3d4d1;borde
 <label style="margin-top:10px">Map tiles — CARTO API key (optional, free)</label>
 <input id="cartoKey" placeholder="Paste your free CARTO key here for clean map tiles">
 <p class="small">Maps work without this (using OpenTopoMap tiles), but for the cleaner street-style map get a free key — no account needed — at <a href="https://carto.com/basemaps/apikey" target="_blank" rel="noopener">carto.com/basemaps/apikey</a>, then paste it here and press Save settings.</p>
-<div class="actions"><button class="primary" onclick="saveSettings()">Save settings</button><button class="secondary" onclick="exportExcel()">⬇ Export Excel</button><button class="secondary" onclick="exportBackupJSON()">⬇ Full Backup</button><button class="secondary" onclick="document.getElementById('backupFile').click()">⬆ Restore Backup</button></div>
+<div class="actions"><button class="primary" onclick="saveSettings()">Save settings</button><button class="secondary" onclick="exportExcel()">⬇ Export Excel</button><button class="secondary" onclick="exportBackupJSON()">⬇ Full Backup</button><button class="secondary" onclick="chooseBackupFile()">⬆ Restore Backup</button></div>
 </div>
 <div class="card"><h3>Data & backup</h3><p class="small" id="syncStatus"></p><p class="small">💡 <b>Full Backup</b> creates a portable JSON copy of everything. <b>Export Excel</b> creates a reporting workbook. Keep a backup before changing phones or clearing Chrome data.</p>
 <button class="danger" onclick="resetAll()">Delete all app data</button></div>
@@ -550,6 +550,7 @@ function refreshClientSelects(){
  const region=$('vCity').value;
  const search=(($('vClientSearch')&&$('vClientSearch').value)||'').trim().toLowerCase();
  let clients=data.clients.filter(c=>(c.region||c.city)===region || (!c.region && c.city===region));
+ if(!clients.length && region==='Islamabad') clients=data.clients.filter(c=>String(c.region||c.city||'')==='Islamabad');
  if(search){
   clients=clients.filter(c=>[c.name,c.sourceCity,c.industrialEstate,c.sector,c.person,c.designation,c.contact,c.address].some(v=>String(v||'').toLowerCase().includes(search)));
  }
@@ -732,22 +733,11 @@ async function resetAll(){if(confirm('Delete ALL clients and visits from this ac
 
 /* ---------- Offline startup ---------- */
 async function purgeOldIndustrialDatabase(){
-  try{
-    // Remove the previously imported industrial prospect database from existing
-    // local data. User-added clients are retained because they do not carry the
-    // imported database's sourceCity marker.
-    const before=data.clients.length;
-    data.clients = (data.clients||[]).filter(c => !c.sourceCity);
-    if(data.clients.length !== before){
-      // Keep visits intact; only the untrusted imported client master is removed.
-      await cSet(LOCAL_DATA_KEY,JSON.stringify(data));
-    }
-    localStorage.removeItem('ark_visit_log_industrial_db_version');
-  }catch(e){ console.warn('Old industrial database cleanup failed', e); }
+  // Retained as a no-op for backward compatibility. Do not remove bundled/user clients.
 }
 async function seedIndustrialDatabase(){
   try{
-    if(localStorage.getItem('ark_visit_log_industrial_db_version')===INDUSTRIAL_DB_VERSION) return;
+    if(localStorage.getItem('ark_visit_log_industrial_db_version')===INDUSTRIAL_DB_VERSION && data.clients.length) return;
     let added=0,updated=0;
     PRELOADED_INDUSTRIAL_CLIENTS.forEach(c=>{
       const incoming={...c};
@@ -769,22 +759,68 @@ async function initApp(){
   $('storageNote').textContent='Offline mode: no login required. Data is saved locally in this browser. Use Backup/Restore when changing devices.';
   clearVisit();
   render();
+  refreshClientSelects();
 }
+
+
+/* ---------- Android file bridge / download helpers ---------- */
+function isAndroidApp(){ return !!(window.Android && typeof Android.saveBase64File==='function'); }
+
+function androidSaveBlob(blob, filename){
+  if(!isAndroidApp()) return false;
+  const reader=new FileReader();
+  reader.onloadend=function(){
+    try{
+      Android.saveBase64File(reader.result, filename, blob.type || 'application/octet-stream');
+    }catch(e){ alert('File save failed: '+e.message); }
+  };
+  reader.readAsDataURL(blob);
+  return true;
+}
+
+function browserDownloadBlob(blob, filename){
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+function saveGeneratedFile(blob, filename){
+  if(!androidSaveBlob(blob,filename)) browserDownloadBlob(blob,filename);
+}
+
+function chooseBackupFile(){
+  if(window.Android && typeof Android.pickFile==='function') Android.pickFile('backup');
+  else $('backupFile').click();
+}
+function chooseExcelFile(){
+  if(window.Android && typeof Android.pickFile==='function') Android.pickFile('excel');
+  else $('importFile').click();
+}
+
+window.androidReceiveFile=function(name,mime,dataUrl,kind){
+  try{
+    const base64=String(dataUrl||'').split(',').pop();
+    const bin=atob(base64);
+    const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    const file=new File([bytes],name,{type:mime||'application/octet-stream'});
+    if(kind==='backup') importBackupJSON({target:{files:[file]}});
+    else importExcel({target:{files:[file]}});
+  }catch(e){ alert('File import failed: '+e.message); }
+};
 
 /* ---------- Full JSON backup / restore ---------- */
 function exportBackupJSON(){
   const payload={
-    format:'ARK Visit Log Backup',
+    format:'ASTRA Visit Log Backup',
     version:1,
     exportedAt:new Date().toISOString(),
     data:data
   };
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download='ARK_Visit_Log_Backup_'+new Date().toISOString().slice(0,10)+'.json';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  saveGeneratedFile(blob,'ASTRA_Visit_Log_Backup_'+new Date().toISOString().slice(0,10)+'.json');
 }
 function importBackupJSON(e){
   const f=e.target.files[0]; if(!f)return;
@@ -793,10 +829,11 @@ function importBackupJSON(e){
     try{
       const payload=JSON.parse(ev.target.result);
       const incoming=payload?.data || payload;
-      if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('This is not a valid ARK Visit Log backup.');
+      if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('This is not a valid ASTRA Visit Log backup.');
       if(!confirm(`Restore backup with ${incoming.clients.length} clients and ${incoming.visits.length} visits? This will replace the current local data.`)) return;
       data={clients:incoming.clients,visits:incoming.visits,settings:Object.assign({planL:20,planI:10,cartoKey:''},incoming.settings||{})};
       await save();
+      render();
       alert('Backup restored successfully.');
     }catch(err){alert('Restore failed: '+err.message)}
     finally{e.target.value=''}
@@ -808,7 +845,7 @@ function importBackupJSON(e){
 async function exportExcel(){
  if(typeof ExcelJS==='undefined'){alert('Excel export library could not load. Connect to the internet and try again.');return}
  const wb=new ExcelJS.Workbook();
- wb.creator='ARK Visit Log'; wb.created=new Date();
+ wb.creator='ASTRA Visit Log'; wb.created=new Date();
  const BRAND='0F6B4C', BRAND_DARK='0A4D36', LIGHT='E9F4EE', AMBER='FDF3E6';
  const titleFont={bold:true,size:13,color:{argb:'FFFFFFFF'}};
  const headFill={type:'pattern',pattern:'solid',fgColor:{argb:'FF'+BRAND}};
@@ -823,7 +860,7 @@ async function exportExcel(){
  sum.columns=[{width:16},{width:16},{width:14},{width:20},{width:20}];
  sum.addRow(['Environmental Solution Pakistan Private Ltd. — Travel & Expense Summary']);
  styleTitleRow(sum,sum.getRow(1),5);
- sum.addRow(['ARK Visit Log — exported '+new Date().toISOString().slice(0,10)]);
+ sum.addRow(['ASTRA Visit Log — exported '+new Date().toISOString().slice(0,10)]);
  sum.getRow(2).font={italic:true,color:{argb:'FF68766D'}};
  sum.addRow([]);
  const sh=sum.addRow(['City','Planned Days','Days Logged','Total Distance (KM)','Total Expense (Rs.)']);
@@ -894,18 +931,16 @@ async function exportExcel(){
  await addCityLog('Islamabad',data.settings.planI);
 
  // ---- Full backup payload inside the Excel file ----
- const bk=wb.addWorksheet('ARK Backup');
- bk.getCell('A1').value='ARK Visit Log full backup (do not edit this sheet)';
- bk.getCell('A2').value=JSON.stringify({format:'ARK Visit Log Backup',version:1,exportedAt:new Date().toISOString(),data:data});
+ const bk=wb.addWorksheet('ASTRA Backup');
+ bk.getCell('A1').value='ASTRA Visit Log full backup (do not edit this sheet)';
+ bk.getCell('A2').value=JSON.stringify({format:'ASTRA Visit Log Backup',version:1,exportedAt:new Date().toISOString(),data:data});
  bk.getColumn(1).width=120;
  bk.getCell('A2').alignment={wrapText:true,vertical:'top'};
  bk.getRow(2).height=120;
 
  const buf=await wb.xlsx.writeBuffer();
  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
- const url=URL.createObjectURL(blob);
- const a=document.createElement('a'); a.href=url; a.download='ARK_Visit_Log_'+new Date().toISOString().slice(0,10)+'.xlsx'; a.click();
- URL.revokeObjectURL(url);
+ saveGeneratedFile(blob,'ASTRA_Visit_Log_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }
 
 /* ---------- Excel import (Client Master List + optional full Visit Log sheets) ---------- */
@@ -997,12 +1032,12 @@ async function importExcel(e){
   try{
    const wb=new ExcelJS.Workbook(); await wb.xlsx.load(ev.target.result);
    let added=0,updated=0,visitsAdded=0;
-   const backupWs=wb.getWorksheet('ARK Backup');
+   const backupWs=wb.getWorksheet('ASTRA Backup') || wb.getWorksheet('ARK Backup');
    if(backupWs){
      const raw=backupWs.getCell('A2').value;
      const payload=JSON.parse(typeof raw==='string'?raw:(raw?.text||''));
      const incoming=payload?.data||payload;
-     if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('Invalid ARK Backup data.');
+     if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('Invalid ASTRA Backup data.');
      incoming.clients.forEach(c=>{const before=data.clients.length;mergeClientRecord({...c},c.region||c.city);if(data.clients.length>before)added++;else updated++});
      const visitKeys=new Set(data.visits.map(v=>String(v.id||'')+'|'+String(v.date||'')+'|'+(v.clientIds||[]).join(',')));
      incoming.visits.forEach(v=>{const key=String(v.id||'')+'|'+String(v.date||'')+'|'+(v.clientIds||[]).join(',');if(!visitKeys.has(key)){data.visits.push(v);visitsAdded++;visitKeys.add(key)}});
@@ -1011,7 +1046,7 @@ async function importExcel(e){
      return;
    }
    const ws=wb.getWorksheet('Client Master List');
-   if(!ws) throw new Error('Client Master List or ARK Backup sheet not found');
+   if(!ws) throw new Error('Client Master List or ASTRA Backup sheet not found');
    // Imported regional database is assigned to the Islamabad region.
    const result=readClientSheet(ws,'Islamabad'); added=result.added; updated=result.updated;
    await save(); render();
