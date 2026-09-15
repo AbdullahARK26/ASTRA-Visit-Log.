@@ -136,6 +136,23 @@ public class MainActivity extends Activity {
 
     public class AndroidBridge {
         @JavascriptInterface
+        public void openExternalUrl(String url) {
+            try {
+                String value = url == null ? "" : url.trim();
+                if (!value.matches("(?i)^https?://.+")) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "Invalid route link.", Toast.LENGTH_SHORT).show());
+                    return;
+                }
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(value));
+                startActivity(intent);
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                        "Could not open the route. Please check the Google Maps link.", Toast.LENGTH_LONG).show());
+            }
+        }
+
+        @JavascriptInterface
         public void saveBase64File(String dataUrl, String filename, String mime) {
             try {
                 String encoded = dataUrl;

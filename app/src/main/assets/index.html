@@ -510,6 +510,15 @@ async function save(){ await cSet(LOCAL_DATA_KEY,JSON.stringify(data)); render()
 const $=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function safeHref(url){const s=String(url||'').trim();return /^https?:\/\//i.test(s)?s:''}
+function openRouteExternal(url){
+  const s=safeHref(url);
+  if(!s) return;
+  if(window.Android && typeof Android.openExternalUrl==='function'){
+    Android.openExternalUrl(s);
+  }else{
+    window.open(s,'_blank','noopener');
+  }
+}
 function money(n){return 'Rs. '+Number(n||0).toLocaleString('en-PK')}
 
 function show(id){document.querySelectorAll('.screen').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));$('nav-'+id).classList.add('active');render();if(id==='visits'){setTimeout(()=>{if(routeMap)routeMap.invalidateSize();refreshRouteMap()},60)}}
@@ -722,7 +731,7 @@ function render(){
   $('clientList').innerHTML=filteredClients.length?filteredClients.map(c=>`<div class="clientcard"><div class="clientrow"><div class="avatar">${esc((c.name||'?').slice(0,2).toUpperCase())}</div><div><b>${esc(c.name)}</b><div class="small">${esc(c.city||c.region||'')} • ${esc(c.person||'No focal person')}${c.designation?' • '+esc(c.designation):''} • ${c.distance||0} km one-way</div><div class="small">${esc(c.contact||'')}${c.address?' • '+esc(c.address):''}</div><div class="actions"><button class="secondary" onclick="openClientLocation(${c.id})">Edit</button><button class="secondary" onclick="recalculateSavedClient(${c.id})">Recalculate</button><button class="danger" onclick="deleteClient(${c.id})">Delete</button></div></div></div></div>`).join(''):(cSearch)?'<div class="card small">No matching clients found in the selected region.</div>':'<div class="card small">No clients found in the selected region. Use the search box above.</div>';
 }
 
- $('visitList').innerHTML=visits.length?[...visits].reverse().map(v=>{let cs=v.clientIds.map(id=>clients.find(c=>c.id==id)?.name||'Deleted client');let ex=v.fuel+v.food+v.toll+v.other;const rh=safeHref(v.route);return `<div class="visit"><div class="visithead"><b>${v.date} • ${v.city}</b><span class="pill">${v.km.toFixed(1)} KM</span></div><div class="small">${cs.map(esc).join(', ')}</div><div class="small">Expense: ${money(ex)}${v.remarks?' • '+esc(v.remarks):''}</div><div class="actions">${rh?`<a class="secondary" style="text-decoration:none;display:inline-block" href="${esc(rh)}" target="_blank" rel="noopener">Open route</a>`:''}<button class="secondary" onclick="openVisitEdit(${v.id})">Edit</button><button class="danger" onclick="deleteVisit(${v.id})">Delete</button></div></div>`}).join(''):'<p class="small">No visits recorded.</p>';
+ $('visitList').innerHTML=visits.length?[...visits].reverse().map(v=>{let cs=v.clientIds.map(id=>clients.find(c=>c.id==id)?.name||'Deleted client');let ex=v.fuel+v.food+v.toll+v.other;const rh=safeHref(v.route);return `<div class="visit"><div class="visithead"><b>${v.date} • ${v.city}</b><span class="pill">${v.km.toFixed(1)} KM</span></div><div class="small">${cs.map(esc).join(', ')}</div><div class="small">Expense: ${money(ex)}${v.remarks?' • '+esc(v.remarks):''}</div><div class="actions">${rh?`<button class="secondary" type="button" onclick="openRouteExternal('${esc(rh).replace(/'/g,"&#39;")}')">Open route</button>`:''}<button class="secondary" onclick="openVisitEdit(${v.id})">Edit</button><button class="danger" onclick="deleteVisit(${v.id})">Delete</button></div></div>`}).join(''):'<p class="small">No visits recorded.</p>';
 
  refreshClientSelects();
  $('syncStatus').innerHTML = '✓ <b>Offline & local.</b> Your clients, visits, distances and settings are stored in this browser on this device. Use <b>Backup / Restore</b> to move the complete data set to another device.';
