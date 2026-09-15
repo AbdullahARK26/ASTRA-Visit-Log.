@@ -763,86 +763,65 @@ async function initApp(){
 }
 
 
-/* ---------- Android file bridge / download helpers ---------- */
-function isAndroidApp(){ return !!(window.Android && typeof Android.saveBase64File==='function'); }
-
-function androidSaveBlob(blob, filename){
-  if(!isAndroidApp()) return false;
-  const reader=new FileReader();
-  reader.onloadend=function(){
-    try{
-      Android.saveBase64File(reader.result, filename, blob.type || 'application/octet-stream');
-    }catch(e){ alert('File save failed: '+e.message); }
-  };
-  reader.readAsDataURL(blob);
-  return true;
-}
-
-function browserDownloadBlob(blob, filename){
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download=filename;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1500);
-}
-
-function saveGeneratedFile(blob, filename){
-  if(!androidSaveBlob(blob,filename)) browserDownloadBlob(blob,filename);
-}
-
-function chooseBackupFile(){
-  if(window.Android && typeof Android.pickFile==='function') Android.pickFile('backup');
-  else $('backupFile').click();
-}
-function chooseExcelFile(){
-  if(window.Android && typeof Android.pickFile==='function') Android.pickFile('excel');
-  else $('importFile').click();
-}
-
-window.androidReceiveFile=function(name,mime,dataUrl,kind){
+/* ---------- Native Android file bridge ---------- */
+function isAndroidApp(){ return !!(window.Android); }
+function chooseBackupFile(){ if(isAndroidApp() && typeof Android.pickFile==='function') Android.pickFile('backup'); else $('backupFile').click(); }
+function chooseExcelFile(){ if(isAndroidApp() && typeof Android.pickFile==='function') Android.pickFile('excel'); else $('importFile').click(); }
+window.androidReceiveBackup=function(json){
   try{
-    const base64=String(dataUrl||'').split(',').pop();
-    const bin=atob(base64);
-    const bytes=new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
-    const file=new File([bytes],name,{type:mime||'application/octet-stream'});
-    if(kind==='backup') importBackupJSON({target:{files:[file]}});
-    else importExcel({target:{files:[file]}});
-  }catch(e){ alert('File import failed: '+e.message); }
+    const incoming=JSON.parse(json);
+    if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('Invalid ASTRA backup file.');
+    if(!confirm(`Restore backup with ${incoming.clients.length} clients and ${incoming.visits.length} visits? This will replace the current local data.`)) return;
+    data={clients:incoming.clients,visits:incoming.visits,settings:Object.assign({planL:20,planI:10,cartoKey:''},incoming.settings||{})};
+    save().then(()=>{render();alert('Backup restored successfully.');}).catch(e=>alert('Restore failed: '+e.message));
+  }catch(e){alert('Restore failed: '+e.message)}
+};
+window.androidReceiveExcel=function(json){
+  try{
+    const book=JSON.parse(json);
+    const sheets=book.sheets||{};
+    const backup=sheets['ASTRA Backup']||sheets['ARK Backup'];
+    if(backup && backup.length>1 && backup[1] && backup[1][0]){
+      const payload=JSON.parse(backup[1][0]); const incoming=payload.data||payload;
+      if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('Invalid ASTRA Backup data.');
+      let added=0,updated=0,visitsAdded=0;
+      incoming.clients.forEach(c=>{const before=data.clients.length;mergeClientRecord({...c},c.region||c.city);if(data.clients.length>before)added++;else updated++;});
+      const keys=new Set(data.visits.map(v=>String(v.id||'')+'|'+String(v.date||'')+'|'+(v.clientIds||[]).join(',')));
+      incoming.visits.forEach(v=>{const k=String(v.id||'')+'|'+String(v.date||'')+'|'+(v.clientIds||[]).join(',');if(!keys.has(k)){data.visits.push(v);keys.add(k);visitsAdded++;}});
+      save().then(()=>{render();alert(`Import merged successfully. ${added} new clients, ${updated} existing clients updated, ${visitsAdded} new visits. Existing data was kept.`);}).catch(e=>alert('Import failed: '+e.message));
+      return;
+    }
+    const rows=sheets['Client Master List'];
+    if(!rows) throw new Error('Client Master List or ASTRA Backup sheet not found');
+    let header=-1;
+    for(let i=0;i<rows.length;i++){const vals=(rows[i]||[]).map(x=>String(x||'').trim().toLowerCase());if(vals.includes('client name')||vals.includes('company name')){header=i;break;}}
+    if(header<0) throw new Error('Client Master List headers not found');
+    const h=rows[header].map(x=>String(x||'').trim().toLowerCase());
+    const ci=(...names)=>{for(const n of names){const i=h.indexOf(n.toLowerCase());if(i>=0)return i;}return -1};
+    const ixName=ci('client name','company name'),ixCity=ci('city'),ixPerson=ci('compliance officer','focal person name','focal person'),ixDes=ci('designation'),ixContact=ci('contact number','contact #','contact'),ixAddr=ci('full address','address'),ixMap=ci('google maps link','google maps','map'),ixDist=ci('distance (km, one-way)','distance','one-way distance');
+    let added=0,updated=0;
+    for(let i=header+1;i<rows.length;i++){const row=rows[i]||[];const name=ixName>=0?row[ixName]:'';if(!name)continue;const c={name:String(name).trim(),city:String(ixCity>=0?row[ixCity]||'Lahore':'Lahore'),region:String(ixCity>=0?row[ixCity]||'Lahore':'Lahore'),person:String(ixPerson>=0?row[ixPerson]||'':'').trim(),designation:String(ixDes>=0?row[ixDes]||'':'').trim(),contact:String(ixContact>=0?row[ixContact]||'':'').trim(),address:String(ixAddr>=0?row[ixAddr]||'':'').trim(),map:String(ixMap>=0?row[ixMap]||'':'').trim(),distance:+(ixDist>=0?row[ixDist]||0:0)||0};const before=data.clients.length;mergeClientRecord(c,c.city);if(data.clients.length>before)added++;else updated++;}
+    save().then(()=>{render();alert(`Import merged successfully. ${added} new clients added and ${updated} existing clients updated. Existing clients and visits were kept.`);}).catch(e=>alert('Import failed: '+e.message));
+  }catch(e){alert('Import failed: '+e.message)}
 };
 
 /* ---------- Full JSON backup / restore ---------- */
 function exportBackupJSON(){
-  const payload={
-    format:'ASTRA Visit Log Backup',
-    version:1,
-    exportedAt:new Date().toISOString(),
-    data:data
-  };
+  const payload={format:'ASTRA Visit Log Backup',version:1,exportedAt:new Date().toISOString(),data:data};
+  const json=JSON.stringify(data);
+  const filename='ASTRA_Visit_Log_Backup_'+new Date().toISOString().slice(0,10)+'.json';
+  if(isAndroidApp() && typeof Android.saveBackup==='function'){ Android.saveBackup(json,filename); return; }
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  saveGeneratedFile(blob,'ASTRA_Visit_Log_Backup_'+new Date().toISOString().slice(0,10)+'.json');
+  const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 function importBackupJSON(e){
-  const f=e.target.files[0]; if(!f)return;
-  const r=new FileReader();
-  r.onload=async ev=>{
-    try{
-      const payload=JSON.parse(ev.target.result);
-      const incoming=payload?.data || payload;
-      if(!incoming || !Array.isArray(incoming.clients) || !Array.isArray(incoming.visits)) throw new Error('This is not a valid ASTRA Visit Log backup.');
-      if(!confirm(`Restore backup with ${incoming.clients.length} clients and ${incoming.visits.length} visits? This will replace the current local data.`)) return;
-      data={clients:incoming.clients,visits:incoming.visits,settings:Object.assign({planL:20,planI:10,cartoKey:''},incoming.settings||{})};
-      await save();
-      render();
-      alert('Backup restored successfully.');
-    }catch(err){alert('Restore failed: '+err.message)}
-    finally{e.target.value=''}
-  };
-  r.readAsText(f);
+  const f=e.target.files[0]; if(!f)return; const r=new FileReader();
+  r.onload=async ev=>{try{const payload=JSON.parse(ev.target.result);const incoming=payload?.data||payload;if(!incoming||!Array.isArray(incoming.clients)||!Array.isArray(incoming.visits))throw new Error('This is not a valid ASTRA Visit Log backup.');if(!confirm(`Restore backup with ${incoming.clients.length} clients and ${incoming.visits.length} visits? This will replace the current local data.`))return;data={clients:incoming.clients,visits:incoming.visits,settings:Object.assign({planL:20,planI:10,cartoKey:''},incoming.settings||{})};await save();render();alert('Backup restored successfully.')}catch(err){alert('Restore failed: '+err.message)}finally{e.target.value=''}}; r.readAsText(f);
 }
 
 /* ---------- Excel export (styled, matches the ESPAK master-sheet layout) ---------- */
 async function exportExcel(){
+ if(isAndroidApp() && typeof Android.exportExcel==='function'){ Android.exportExcel(JSON.stringify(data),'ASTRA_Visit_Log_'+new Date().toISOString().slice(0,10)+'.xlsx'); return; }
  if(typeof ExcelJS==='undefined'){alert('Excel export library could not load. Connect to the internet and try again.');return}
  const wb=new ExcelJS.Workbook();
  wb.creator='ASTRA Visit Log'; wb.created=new Date();
