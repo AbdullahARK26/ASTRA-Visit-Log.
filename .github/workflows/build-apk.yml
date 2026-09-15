@@ -6,7 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -27,11 +26,6 @@ jobs:
         with:
           gradle-version: '8.10'
 
-      - name: Show ASTRA version
-        run: |
-          echo "Checking app/build.gradle:"
-          cat app/build.gradle
-
       - name: Build ASTRA APK
         run: gradle assembleDebug
 
@@ -40,10 +34,10 @@ jobs:
           echo "Source version:"
           grep -n "versionCode\|versionName" app/build.gradle
           echo "Built APK version:"
-          $ANDROID_HOME/build-tools/35.0.0/aapt dump badging app/build/outputs/apk/debug/app-debug.apk | grep -E "package: name=|versionCode=|versionName="
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep -E "package: name=|versionCode=|versionName="
 
       - name: Upload ASTRA APK
         uses: actions/upload-artifact@v4
         with:
-          name: ASTRA-Visit-Log-APK-v2.0
+          name: ASTRA-Visit-Log-APK-v2.1
           path: app/build/outputs/apk/debug/app-debug.apk
