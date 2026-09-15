@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.database.Cursor;
 import android.util.Base64;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
@@ -108,6 +109,30 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void saveBytes(byte[] bytes, String filename, String mime) throws Exception {
+        String safeName = filename == null ? "ASTRA_file" : filename.replaceAll("[\\/:*?\"<>|]", "_");
+        String safeMime = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
+        if (Build.VERSION.SDK_INT >= 29) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
+            values.put(MediaStore.Downloads.MIME_TYPE, safeMime);
+            values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ASTRA Visit Log");
+            values.put(MediaStore.Downloads.IS_PENDING, 1);
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) throw new Exception("Could not create Downloads file");
+            try (OutputStream out = getContentResolver().openOutputStream(uri)) { if (out == null) throw new Exception("Could not open output stream"); out.write(bytes); }
+            values.clear(); values.put(MediaStore.Downloads.IS_PENDING, 0); getContentResolver().update(uri, values, null, null);
+        } else {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 3001);
+                throw new Exception("Storage permission is required to save the file.");
+            }
+            File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ASTRA Visit Log");
+            if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create Downloads folder");
+            try (FileOutputStream out = new FileOutputStream(new File(dir, safeName))) { out.write(bytes); }
+        }
+    }
+
     public class AndroidBridge {
         @JavascriptInterface
         public void saveBase64File(String dataUrl, String filename, String mime) {
@@ -170,6 +195,27 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void saveBackup(String json, String filename) {
+            try {
+                org.json.JSONObject check = new org.json.JSONObject(json); if(!check.has("clients") || !check.has("visits")) throw new Exception("Invalid data");
+                org.json.JSONObject payload = new org.json.JSONObject();
+                payload.put("format", "ASTRA Visit Log Backup"); payload.put("version", 1); payload.put("exportedAt", new java.util.Date().toString()); payload.put("data", new org.json.JSONObject(json));
+                saveBytes(payload.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8), filename, "application/json");
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Backup saved to Downloads / ASTRA Visit Log", Toast.LENGTH_LONG).show());
+            } catch (Exception e) { runOnUiThread(() -> Toast.makeText(MainActivity.this, "Backup failed: " + e.getMessage(), Toast.LENGTH_LONG).show()); }
+        }
+
+        @JavascriptInterface
+        public void exportExcel(String json, String filename) {
+            try {
+                org.json.JSONObject d = new org.json.JSONObject(json);
+                byte[] bytes = XlsxNative.buildWorkbook(d);
+                saveBytes(bytes, filename, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Excel saved to Downloads / ASTRA Visit Log", Toast.LENGTH_LONG).show());
+            } catch (Exception e) { runOnUiThread(() -> Toast.makeText(MainActivity.this, "Excel export failed: " + e.getMessage(), Toast.LENGTH_LONG).show()); }
+        }
+
+        @JavascriptInterface
         public void pickFile(String kind) {
             final String selectedKind = kind == null ? "excel" : kind;
             runOnUiThread(() -> {
@@ -196,37 +242,37 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String displayName(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri, null, null, null, null)) {
+            if (c != null && c.moveToFirst()) { int i=c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME); if(i>=0) return c.getString(i); }
+        } catch(Exception ignored) {}
+        return "ASTRA_import";
+    }
+
     private void deliverPickedFile(Uri uri, String kind) {
         if (uri == null) return;
         try {
-            String mime = getContentResolver().getType(uri);
-            if (mime == null) mime = "application/octet-stream";
-            String name = "ASTRA_import";
-            String path = uri.getPath();
-            if (path != null && path.contains("/")) {
-                String candidate = path.substring(path.lastIndexOf('/') + 1);
-                if (!candidate.isEmpty()) name = candidate;
-            }
-
             InputStream in = getContentResolver().openInputStream(uri);
             if (in == null) throw new Exception("Cannot read selected file");
-            java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
-            byte[] tmp = new byte[8192];
-            int n;
-            while ((n = in.read(tmp)) != -1) buffer.write(tmp, 0, n);
-            in.close();
-
-            String base64 = Base64.encodeToString(buffer.toByteArray(), Base64.NO_WRAP);
-            String dataUrl = "data:" + mime + ";base64," + base64;
-            String js = "window.androidReceiveFile(" +
-                    org.json.JSONObject.quote(name) + "," +
-                    org.json.JSONObject.quote(mime) + "," +
-                    org.json.JSONObject.quote(dataUrl) + "," +
-                    org.json.JSONObject.quote(kind) + ");";
-            webView.evaluateJavascript(js, null);
-        } catch (Exception e) {
-            Toast.makeText(this, "Import failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream(); byte[] tmp=new byte[8192]; int n;
+            while((n=in.read(tmp))!=-1) buffer.write(tmp,0,n); in.close();
+            String jsonResult;
+            if ("backup".equals(kind)) {
+                String raw=buffer.toString("UTF-8");
+                org.json.JSONObject payload=new org.json.JSONObject(raw);
+                org.json.JSONObject incoming=payload.optJSONObject("data");
+                if(incoming==null) incoming=payload;
+                if(!incoming.has("clients") || !incoming.has("visits")) throw new Exception("Invalid ASTRA backup file");
+                jsonResult=incoming.toString();
+                String js="window.androidReceiveBackup("+org.json.JSONObject.quote(jsonResult)+");";
+                webView.evaluateJavascript(js,null);
+            } else {
+                org.json.JSONObject parsed=XlsxNative.readWorkbook(buffer.toByteArray());
+                jsonResult=parsed.toString();
+                String js="window.androidReceiveExcel("+org.json.JSONObject.quote(jsonResult)+");";
+                webView.evaluateJavascript(js,null);
+            }
+        } catch(Exception e) { runOnUiThread(() -> Toast.makeText(MainActivity.this, "Import failed: " + e.getMessage(), Toast.LENGTH_LONG).show()); }
     }
 
     @Override
