@@ -394,8 +394,12 @@ button.danger{background:#fdf1f0;color:var(--red);border:1px solid #f3d4d1;borde
 
 </div>
 
-<div class="actions"><button class="primary" id="visitSaveBtn" onclick="saveVisit()">Save Visit</button><button class="secondary" onclick="clearVisit()">Clear</button><button class="secondary hidden" id="visitCancelBtn" onclick="clearVisit()">Cancel edit</button></div>
-
+<div class="actions">
+  <button class="primary" id="visitSaveBtn" onclick="saveVisit()">Save Visit</button>
+  <button class="primary" id="visitNextBtn" type="button" onclick="saveVisitAndAddNext()">Save &amp; Add Next Visit</button>
+  <button class="secondary" onclick="clearVisit()">Clear</button>
+  <button class="secondary hidden" id="visitCancelBtn" onclick="clearVisit()">Cancel edit</button>
+</div>
 <p class="small" id="visitCalc">Select clients to see calculated distance.</p>
 
 </div>
