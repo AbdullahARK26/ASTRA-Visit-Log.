@@ -1025,6 +1025,8 @@ function setVisitFormMode(editing){
 
  if($('visitCancelBtn'))$('visitCancelBtn').classList.toggle('hidden',!editing);
 
+ if($('visitNextBtn'))$('visitNextBtn').classList.toggle('hidden',editing);
+
 }
 
 async function saveVisit(){
@@ -1066,6 +1068,108 @@ async function saveVisit(){
  }
 
  clearVisit(); await save();
+
+}
+
+async function saveVisitAndAddNext(){
+
+ let ids=['v1','v2','v3','v4']
+   .map(id=>$(id).value)
+   .filter(Boolean);
+
+ if(!ids.length){
+   alert('Select at least one client.');
+   return;
+ }
+
+ const result=await calculateVisitRoute(ids);
+
+ let km=result?.km;
+
+ if(km===undefined||km===null){
+   km=ids.reduce(
+     (a,id)=>a+Number(data.clients.find(c=>c.id==id)?.distance||0),
+     0
+   )*2;
+ }
+
+ lastCalcKm=km;
+
+ const route=
+   $('route').value.trim()||
+   mapsRouteLink(ids,$('vCity').value);
+
+ const fuel=computeFuel();
+ const food=computeFood();
+
+ const rec={
+   date:$('vDate').value||
+     new Date().toISOString().slice(0,10),
+
+   city:$('vCity').value,
+
+   clientIds:ids,
+
+   km:km,
+
+   fuel:fuel,
+
+   food:food,
+
+   toll:+$('toll').value||0,
+
+   other:+$('other').value||0,
+
+   route:route,
+
+   remarks:$('remarks').value.trim(),
+
+   fuelMode:$('fuelMode').value,
+
+   fuelRate:+$('fuelRate').value||0,
+
+   fuelActual:+$('fuelActual').value||0,
+
+   foodMode:$('foodMode').value,
+
+   mealCount:+$('mealCount').value||0,
+
+   mealRate:+$('mealRate').value||0,
+
+   nightCount:+$('nightCount').value||0,
+
+   nightRate:+$('nightRate').value||0,
+
+   foodActual:+$('foodActual').value||0
+ };
+
+ data.visits.push({
+   id:Date.now(),
+   ...rec
+ });
+
+ await save();
+
+ const nextDate=rec.date;
+ const nextCity=rec.city;
+
+ clearVisit();
+
+ if($('vDate')){
+   $('vDate').value=nextDate;
+ }
+
+ if($('vCity')){
+   $('vCity').value=nextCity;
+ }
+
+ editingVisitId=null;
+
+ setVisitFormMode(false);
+
+ show('visits');
+
+ alert('Visit saved. Ready to add the next visit.');
 
 }
 
